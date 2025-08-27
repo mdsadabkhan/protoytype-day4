@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Recording Interface</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #000;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .recording-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        .header {
+            background: #1a1a1a;
+            padding: 10px 20px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+        
+        .status.recording {
+            background: #ff4444;
+            color: white;
+        }
+        
+        .status.ready {
+            background: #44ff44;
+            color: black;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            background: #0066ff;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background: #0052cc;
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        
+        .iframe-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #targetFrame {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        
+        .sidebar {
+            width: 300px;
+            background: #1a1a1a;
+            border-left: 1px solid #333;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .floating-stop {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 16px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(255, 68, 68, 0.3);
+            display: none;
+        }
+        
+        .floating-stop:hover {
+            background: #ff2222;
+            transform: scale(1.1);
+        }
+        
+        .step {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 12px;
+        }
+        
+        .step-type {
+            color: #00d4ff;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        
+        .step-selector {
+            font-family: monospace;
+            color: #ccc;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="recording-container">
+        <div class="header">
+            <div>
+                <h3>🎭 Recording Session</h3>
+                <small>Session: <span id="sessionId">Loading...</span></small>
+            </div>
+            <div class="controls">
+                <div id="status" class="status ready">Ready</div>
+                <button id="startBtn">Start</button>
+                <button id="pauseBtn" disabled>Pause</button>
+                <button id="stopBtn" disabled>Stop</button>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="iframe-container">
+                <iframe id="targetFrame" src="about:blank"></iframe>
+            </div>
+            <div class="sidebar">
+                <h4>Recorded Steps (<span id="stepCount">0</span>)</h4>
+                <div id="stepsList"></div>
+            </div>
+        </div>
+    </div>
+
+    <button id="floatingStop" class="floating-stop">⏹</button>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Get session ID from URL
+        const sessionId = window.location.pathname.split('/').pop();
+        document.getElementById('sessionId').textContent = sessionId;
+
+        // Initialize Socket.IO
+        const socket = io();
+        
+        // UI Elements
+        const statusEl = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const pauseBtn = document.getElementById('pauseBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const floatingStop = document.getElementById('floatingStop');
+        const stepCountEl = document.getElementById('stepCount');
+        const stepsListEl = document.getElementById('stepsList');
+        const targetFrame = document.getElementById('targetFrame');
+
+        let isRecording = false;
+        let steps = [];
+        let targetUrl = '';
+
+        // Join session room
+        socket.emit('join-session', sessionId);
+
+        // Socket event listeners
+        socket.on('recording:started', () => {
+            isRecording = true;
+            updateUI();
+            statusEl.textContent = 'Recording';
+            statusEl.className = 'status recording';
+            floatingStop.style.display = 'block';
+            
+            // Load target URL in iframe
+            if (targetUrl) {
+                targetFrame.src = targetUrl;
+                setupRecordingInFrame();
+            }
+        });
+
+        socket.on('recording:paused', () => {
+            statusEl.textContent = 'Paused';
+            statusEl.className = 'status ready';
+        });
+
+        socket.on('recording:ended', () => {
+            isRecording = false;
+            updateUI();
+            statusEl.textContent = 'Stopped';
+            statusEl.className = 'status ready';
+            floatingStop.style.display = 'none';
+        });
+
+        socket.on('step:recorded', (data) => {
+            steps.push(data.step);
+            updateStepsList();
+        });
+
+        socket.on('session:error', (data) => {
+            alert('Error: ' + data.error);
+        });
+
+        // Button event listeners
+        startBtn.addEventListener('click', () => {
+            socket.emit('recording:start', { sessionId });
+        });
+
+        pauseBtn.addEventListener('click', () => {
+            socket.emit('recording:pause', { sessionId });
+        });
+
+        stopBtn.addEventListener('click', () => {
+            socket.emit('recording:stop', { sessionId });
+        });
+
+        floatingStop.addEventListener('click', () => {
+            socket.emit('recording:stop', { sessionId });
+        });
+
+        function updateUI() {
+            startBtn.disabled = isRecording;
+            pauseBtn.disabled = !isRecording;
+            stopBtn.disabled = !isRecording;
+        }
+
+        function setupRecordingInFrame() {
+            targetFrame.onload = function() {
+                try {
+                    const frameDoc = targetFrame.contentDocument || targetFrame.contentWindow.document;
+                    
+                    // Inject recording script
+                    const script = frameDoc.createElement('script');
+                    script.textContent = `
+                        function generatePlaywrightSelector(element) {
+                            // Priority: data-testid > aria-label > id > class > tag
+                            if (element.getAttribute('data-testid')) {
+                                return \`[data-testid="\${element.getAttribute('data-testid')}"]\`;
+                            }
+                            if (element.getAttribute('aria-label')) {
+                                return \`[aria-label="\${element.getAttribute('aria-label')}"]\`;
+                            }
+                            if (element.id) {
+                                return \`#\${element.id}\`;
+                            }
+                            if (element.className && typeof element.className === 'string') {
+                                const classes = element.className.split(' ').filter(c => c.length > 0);
+                                if (classes.length > 0) {
+                                    return \`.\${classes[0]}\`;
+                                }
+                            }
+                            return element.tagName.toLowerCase();
+                        }
+
+                        function recordAction(type, element, value = '') {
+                            const selector = generatePlaywrightSelector(element);
+                            const description = \`\${type.charAt(0).toUpperCase() + type.slice(1)} \${selector}\`;
+                            
+                            window.parent.postMessage({
+                                type: 'RECORD_ACTION',
+                                data: {
+                                    type,
+                                    selector,
+                                    value,
+                                    description,
+                                    timestamp: Date.now()
+                                }
+                            }, '*');
+                        }
+
+                        // Record clicks
+                        document.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            recordAction('click', e.target);
+                        }, true);
+
+                        // Record input changes
+                        document.addEventListener('input', (e) => {
+                            recordAction('fill', e.target, e.target.value);
+                        }, true);
+
+                        // Record form submissions
+                        document.addEventListener('submit', (e) => {
+                            e.preventDefault();
+                            recordAction('submit', e.target);
+                        }, true);
+
+                        // Record select changes
+                        document.addEventListener('change', (e) => {
+                            if (e.target.tagName === 'SELECT') {
+                                recordAction('select', e.target, e.target.value);
+                            }
+                        }, true);
+                    \`;
+                    frameDoc.head.appendChild(script);
+                } catch (error) {
+                    console.error('Could not inject recording script:', error);
+                }
+            };
+        }
+
+        // Listen for messages from iframe
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'RECORD_ACTION') {
+                const stepData = event.data.data;
+                socket.emit('step:add', { sessionId, stepData });
+            }
+        });
+        function updateStepsList() {
+            stepCountEl.textContent = steps.length;
+            
+            stepsListEl.innerHTML = steps.map((step, index) => `
+                <div class="step">
+                    <div class="step-type">${step.type}</div>
+                    <div>${step.description}</div>
+                    <div class="step-selector">${step.selector}</div>
+                </div>
+            `).join('');
+        }
+
+        // Load existing session data
+        fetch(`/api/session/${sessionId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.data) {
+                    targetUrl = data.data.targetUrl;
+                    if (data.data.steps) {
+                        steps = data.data.steps;
+                    }
+                    updateStepsList();
+                }
+            })
+            .catch(console.error);
+    </script>
+</body>
+</html>
