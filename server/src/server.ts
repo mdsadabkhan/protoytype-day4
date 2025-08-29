@@ -26,12 +26,12 @@ const app = express();
 const server = createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true
+    origin: process.env['FRONTEND_URL'] || 'http://localhost:5173',
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true,
   },
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
 });
 
 // Initialize managers
@@ -40,44 +40,52 @@ const sessionManager = new SessionManager(browserManager);
 const wsManager = new WebSocketManager(io, sessionManager);
 
 // Middleware
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+      },
     },
-  },
-}));
+  })
+);
 
 app.use(compression());
-app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
+app.use(
+  morgan('combined', {
+    stream: { write: (message) => logger.info(message.trim()) },
+  })
+);
 
-app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:5173",
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: process.env['FRONTEND_URL'] || 'http://localhost:5173',
+    credentials: true,
+  })
+);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: 'Too many requests from this IP, please try again later.',
 });
 app.use('/api/', limiter);
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
+  res.json({
+    status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    activeSessions: sessionManager.getActiveSessionCount()
+    activeSessions: sessionManager.getActiveSessionCount(),
   });
 });
 
@@ -86,13 +94,18 @@ app.use('/api/session', sessionRoutes(sessionManager, wsManager));
 app.use('/api/test', testRoutes(sessionManager));
 app.use('/api/export', exportRoutes(sessionManager));
 
-// Serve static files for test recording interface
-app.use('/recording', express.static(path.join(__dirname, '../public/recording')));
+// Serve built recording UI
+const recordingPath = path.join(__dirname, '../public/recording');
+app.use('/recording', express.static(recordingPath, { index: 'index.html' }));
+// Fallback to index.html for client-side routing under /recording/*
+app.get('/recording/*', (req, res) => {
+  res.sendFile(path.join(recordingPath, 'index.html'));
+});
 
 // Error handling
 app.use(errorHandler);
 
-// 404 handler
+// 404 handler for all other routes
 app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
@@ -100,11 +113,7 @@ app.use('*', (req, res) => {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down gracefully');
-  
-  // Close all browser sessions
   await browserManager.closeAll();
-  
-  // Close server
   server.close(() => {
     logger.info('Server closed');
     process.exit(0);
@@ -113,20 +122,20 @@ process.on('SIGTERM', async () => {
 
 process.on('SIGINT', async () => {
   logger.info('SIGINT received, shutting down gracefully');
-  
   await browserManager.closeAll();
-  
   server.close(() => {
     logger.info('Server closed');
     process.exit(0);
   });
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env['PORT'] || 3001;
 
 server.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
-  logger.info(`Frontend URL: ${process.env.FRONTEND_URL || "http://localhost:5173"}`);
+  logger.info(
+    `Frontend URL: ${process.env['FRONTEND_URL'] || 'http://localhost:5173'}`
+  );
 });
 
 export { app, server, io };

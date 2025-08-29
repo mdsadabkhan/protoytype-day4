@@ -6,7 +6,7 @@ class DatabaseManager {
   private db: Database.Database;
 
   constructor() {
-    const dbPath = process.env.NODE_ENV === 'production' 
+    const dbPath = process.env['NODE_ENV'] === 'production' 
       ? path.join(process.cwd(), 'data', 'playwright-automation.db')
       : path.join(__dirname, '../../data/playwright-automation.db');
     

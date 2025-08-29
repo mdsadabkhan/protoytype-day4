@@ -7,7 +7,7 @@ interface ValidationSchema {
   params?: Joi.ObjectSchema;
 }
 
-export const validateRequest = (schema: any) => {
+export const validateRequest = (schema: ValidationSchema | { body?: any; query?: any; params?: any }) => {
   return (req: Request, res: Response, next: NextFunction) => {
     const validationSchema: ValidationSchema = {};
 
@@ -57,48 +57,75 @@ export const validateRequest = (schema: any) => {
     }
 
     next();
+    return;
   };
 };
 
-function createJoiSchema(schemaDefinition: any): Joi.ObjectSchema {
-  const joiObject: any = {};
+function createJoiSchema(schemaDefinition: Record<string, unknown>): Joi.ObjectSchema {
+  const joiObject: Record<string, Joi.Schema> = {};
 
-  for (const [key, definition] of Object.entries(schemaDefinition as any)) {
-    let joiField: any;
+  for (const [key, definition] of Object.entries(schemaDefinition)) {
+    let joiField: Joi.Schema;
 
-    switch (definition.type) {
+    // Type guard for definition
+    if (typeof definition !== 'object' || definition === null) {
+      joiObject[key] = Joi.any();
+      continue;
+    }
+
+    const def = definition as {
+      type?: string;
+      minLength?: number;
+      maxLength?: number;
+      pattern?: RegExp;
+      enum?: any[];
+      min?: number;
+      max?: number;
+      items?: any;
+      required?: boolean;
+      properties?: Record<string, unknown>;
+    };
+
+    switch (def.type) {
       case 'string':
         joiField = Joi.string();
-        if (definition.minLength) joiField = joiField.min(definition.minLength);
-        if (definition.maxLength) joiField = joiField.max(definition.maxLength);
-        if (definition.pattern) joiField = joiField.pattern(definition.pattern);
-        if (definition.enum) joiField = joiField.valid(...definition.enum);
+        if (def.minLength !== undefined) joiField = (joiField as Joi.StringSchema).min(def.minLength);
+        if (def.maxLength !== undefined) joiField = (joiField as Joi.StringSchema).max(def.maxLength);
+        if (def.pattern !== undefined) joiField = (joiField as Joi.StringSchema).pattern(def.pattern);
+        if (def.enum !== undefined) joiField = joiField.valid(...def.enum);
         break;
-      
+
       case 'number':
         joiField = Joi.number();
-        if (definition.min !== undefined) joiField = joiField.min(definition.min);
-        if (definition.max !== undefined) joiField = joiField.max(definition.max);
+        if (def.min !== undefined) joiField = (joiField as Joi.NumberSchema).min(def.min);
+        if (def.max !== undefined) joiField = (joiField as Joi.NumberSchema).max(def.max);
         break;
-      
+
       case 'boolean':
         joiField = Joi.boolean();
         break;
-      
+
       case 'array':
-        joiField = Joi.array();
-        if (definition.items) joiField = joiField.items(createJoiSchema({ item: definition.items }).extract('item'));
+        if (def.items) {
+          joiField = Joi.array().items(createJoiSchema({ item: def.items }).extract('item'));
+        } else {
+          joiField = Joi.array();
+        }
         break;
-      
+
       case 'object':
-        joiField = Joi.object();
+        if (def.properties) {
+          joiField = createJoiSchema(def.properties);
+        } else {
+          joiField = Joi.object();
+        }
         break;
-      
+
       default:
         joiField = Joi.any();
     }
 
-    if (definition.required) {
+    if (def.required) {
       joiField = joiField.required();
     } else {
       joiField = joiField.optional();
